@@ -1,29 +1,5 @@
 WAGTAIL_MENU_APPS_ORDER = [
-    "x",
-    "collection",
-    "journal",
-    "editorialboard",
-    "issue",
-    "article",
-
-    "book",
-
-    "location",
-    "institution",
-    "researcher",
-
-    "thematic_areas",
-    "vocabulary",
     "core",
-
-    "altmetric",
-    "report",
-
-    "amjournal",
-
-    "article_subm",
-
-    "pid_provider",
     "django_celery_beat",
     "tracker",
     "files_storage",

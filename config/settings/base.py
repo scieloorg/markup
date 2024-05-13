@@ -118,30 +118,6 @@ LOCAL_APPS = [
     "core.users",
     "core_settings",
     # Your stuff: custom apps go here
-    "altmetric",
-    "article",
-    "bigbang",
-    "book",
-    "collection",
-    "core",
-    "editorialboard",
-    "files_storage",
-    "institution",
-    "issue",
-    "journal",
-    "location",
-    "pid_provider",
-    "doi",
-    "doi_manager",
-    "researcher",
-    "thematic_areas",
-    "vocabulary",
-    "search",
-    "reference",
-    "tracker",
-    "journalpage",
-    "report",
-    "toc"
 ]
 
 # https://docs.djangoproject.com/en/dev/ref/settings/#installed-apps
@@ -468,7 +444,7 @@ SEARCH_FACET_LIST = [
 
 WAGTAIL_USER_EDIT_FORM = 'core.users.forms.CustomUserEditForm'
 WAGTAIL_USER_CREATION_FORM = 'core.users.forms.CustomUserCreationForm'
-WAGTAIL_USER_CUSTOM_FIELDS = ['collection', 'journal']
+WAGTAIL_USER_CUSTOM_FIELDS = []
 
 # django maintenance mode
 # ------------------------------------------------------------------------------
