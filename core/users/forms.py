@@ -6,9 +6,6 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from wagtail.users.forms import UserCreationForm, UserEditForm
 
-from collection.models import Collection
-from journal.models import Journal
-
 User = get_user_model()
 
 
@@ -48,10 +45,13 @@ class UserSocialSignupForm(SocialSignupForm):
 
 
 class CustomUserEditForm(UserEditForm):
+    """
     journal = forms.ModelMultipleChoiceField(queryset=Journal.objects.all(), required=False, label=_("Journal"))
     collection = forms.ModelMultipleChoiceField(queryset=Collection.objects.filter(is_active=True), required=True, label=_("Collection"))
-
+    """
 
 class CustomUserCreationForm(UserCreationForm):
+    """
     journal = forms.ModelMultipleChoiceField(queryset=Journal.objects.all(), required=False, label=_("Journal"))
     collection = forms.ModelMultipleChoiceField(queryset=Collection.objects.filter(is_active=True), required=True, label=_("Collection"))
+    """
