@@ -1,0 +1,130 @@
+version: "3"
+
+services:
+  django: &django
+    build:
+      context: .
+      dockerfile: ./compose/local/django/Dockerfile
+    image: scielo_markup_local_django
+    container_name: scielo_markup_local_django
+    depends_on:
+      - redis
+      - postgres
+      - mailhog
+      - pgbouncer
+      - solr
+    links:
+      - pgbouncer
+      - solr
+    volumes:
+      - .:/app:z
+    env_file:
+      - ./.envs/.local/.django
+      - ./.envs/.local/.postgres
+    ports:
+      - "8009:8000"
+    command: /start
+
+  pgbouncer:
+    image: edoburu/pgbouncer:1.14.0
+    restart: always
+    container_name: scielo_markup_local_pgbouncer
+    environment:
+      - DATABASE_URL=postgres://GVRFlLmcCNfGLhsFvSnCioYOPJPYpyfj:BQ4hSUL4rdj5WZLdR8ilDLRQMvCtzo0caMaXDO0olGsmycQjlcZlTVK9DepZR8kk@postgres/scielo_markup
+      - MAX_CLIENT_CONN=100
+    ports:
+      - 6439:5432
+    depends_on:
+      - postgres
+    links:
+      - postgres
+
+  solr:
+    image: solr:9.3
+    restart: always
+    ports:
+      - "8984:8984"
+    volumes:
+        - ./index:/var/solr
+    environment:
+      - SOLR_JAVA_MEM=-Xms512m -Xmx512m
+      - SOLR_HEAP=512m
+
+  postgres:
+    build:
+      context: .
+      dockerfile: ./compose/production/postgres/Dockerfile
+    image: scielo_markup_local_postgres
+    container_name: scielo_markup_local_postgres
+    volumes:
+      - ../scms_data/scielo_markup/data_dev:/var/lib/postgresql/data:Z
+      - ../scms_data/scielo_markup/data_dev_backup:/backups:z
+    ports:
+      - "5439:5432"
+    env_file:
+      - ./.envs/.local/.postgres
+
+  adminer:
+    image: adminer
+    container_name: scielo_markup_local_adminer
+    ports:
+      - "8089:8080"
+
+  # docs:
+  #   image: scielo_markup_local_docs
+  #   container_name: scielo_markup_local_docs
+  #   build:
+  #     context: .
+  #     dockerfile: ./compose/local/docs/Dockerfile
+  #   env_file:
+  #     - ./.envs/.local/.django
+  #   volumes:
+  #     - ./docs:/docs:z
+  #     - ./config:/app/config:z
+  #     - ./core:/app/core:z
+  #   ports:
+  #     - "9000:9000"
+  #   command: /start-docs
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.0
+    container_name: scielo_markup_local_mailhog
+    ports:
+      - "8029:8025"
+
+  redis:
+    image: redis:6
+    container_name: scielo_markup_local_redis
+    ports:
+      - "6399:6379"
+
+
+  celeryworker:
+    <<: *django
+    image: scielo_markup_local_celeryworker
+    container_name: scielo_markup_local_celeryworker
+    depends_on:
+      - redis
+      - postgres
+      - mailhog
+    ports: []
+    command: /start-celeryworker
+
+  celerybeat:
+    <<: *django
+    image: scielo_markup_local_celerybeat
+    container_name: scielo_markup_local_celerybeat
+    depends_on:
+      - redis
+      - postgres
+      - mailhog
+    ports: []
+    command: /start-celerybeat
+
+  flower:
+    <<: *django
+    image: scielo_markup_local_flower
+    container_name: scielo_markup_local_flower
+    ports:
+      - "5559:5555"
+    command: /start-flower
