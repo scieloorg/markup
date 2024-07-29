@@ -117,6 +117,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "core.users",
     "core_settings",
+    "markup_doc"
     # Your stuff: custom apps go here
 ]
 
