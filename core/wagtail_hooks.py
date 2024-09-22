@@ -10,26 +10,9 @@ from wagtail.contrib.modeladmin.options import (
     ModelAdminGroup,
     modeladmin_register,
 )
-
-from article.models import Article
-from collection.models import Collection
 from core.models import Gender
 from config.menu import get_menu_order, WAGTAIL_MENU_APPS_ORDER
-from journal import models
 from config.menu import get_menu_order
-from journal.wagtail_hooks import (
-    IndexedAtAdmin,
-    AdditionalIndexedAtAdmin,
-    IndexedAtFileAdmin,
-    ArticleSubmissionFormatCheckListAdmin,
-    SubjectAdmin,
-    WebOfKnowledgeAdmin,
-    WosAreaAdmin,
-    StandardAdmin,
-)
-from thematic_areas.wagtail_hooks import ThematicAreaAdmin, ThematicAreaFileAdmin
-from vocabulary.wagtail_hooks import VocabularyAdmin, KeywordAdmin
-
 
 @hooks.register("insert_global_admin_css", order=100)
 def global_admin_css():
@@ -52,58 +35,6 @@ def remove_all_summary_items(request, items):
     items.clear()
 
 
-class CollectionSummaryItem(SummaryItem):
-    order = 100
-    template_name = "wagtailadmin/summary_items/collection_summary_item.html"
-
-    def get_context_data(self, parent_context):
-        site_details = get_site_for_user(self.request.user)
-        total_collection = Collection.objects.filter(is_active=True).count()
-        return {
-            "total_collection": total_collection,
-            "site_name": site_details["site_name"],
-        }
-
-    def is_shown(self):
-        return True
-
-
-class JournalSummaryItem(SummaryItem):
-    order = 200
-    template_name = "wagtailadmin/summary_items/journal_summary_item.html"
-
-    def get_context_data(self, parent_context):
-        site_details = get_site_for_user(self.request.user)
-        total_journal = models.Journal.objects.all().count()
-        return {
-            "total_journal": total_journal,
-            "site_name": site_details["site_name"],
-        }
-
-    def is_shown(self):
-        return True
-
-
-class ArticleSummaryItem(SummaryItem):
-    order = 300
-    template_name = "wagtailadmin/summary_items/article_summary_item.html"
-
-    def get_context_data(self, parent_context):
-        site_details = get_site_for_user(self.request.user)
-        total_article = Article.objects.all().count()
-        return {
-            "total_article": total_article,
-            "site_name": site_details["site_name"],
-        }
-
-
-@hooks.register("construct_homepage_summary_items", order=2)
-def add_items_summary_items(request, items):
-    items.append(CollectionSummaryItem(request))
-    items.append(JournalSummaryItem(request))
-    items.append(ArticleSummaryItem(request))
-
-
 class GenderAdmin(ModelAdmin):
     model = Gender
     menu_icon = "folder"
@@ -119,28 +50,6 @@ class GenderAdmin(ModelAdmin):
         "code",
         "gender",
     )
-
-class ListCodesAdminGroup(ModelAdminGroup):
-    menu_label = "List of codes"
-    menu_icon = "folder-open-inverse"
-    menu_order = get_menu_order("core")
-    items = (
-        IndexedAtAdmin,
-        AdditionalIndexedAtAdmin,
-        IndexedAtFileAdmin,
-        SubjectAdmin,
-        WebOfKnowledgeAdmin,
-        WosAreaAdmin,
-        StandardAdmin,
-        GenderAdmin,
-        VocabularyAdmin, 
-        KeywordAdmin,
-        ThematicAreaAdmin,
-        ThematicAreaFileAdmin,
-        ArticleSubmissionFormatCheckListAdmin,
-    )
-
-modeladmin_register(ListCodesAdminGroup)
 
 
 @hooks.register('construct_main_menu')
