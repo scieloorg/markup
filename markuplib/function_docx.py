@@ -5,6 +5,7 @@ from docx.oxml.ns import qn
 from lxml import etree, objectify
 from wagtail.images import get_image_model
 from django.core.files.base import ContentFile
+import zipfile
 
 ImageModel = get_image_model()
 
@@ -16,7 +17,49 @@ class functionsDocx:
         return doc
 
 
-    def extractContent(doc):
+    def extract_numbering_info(self, docx_path):
+        # Diccionario para mapear numId a su tipo (numerada o viñeta)
+        numbering_map = {}
+        namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+        # Abrir el archivo DOCX como un archivo ZIP
+        with zipfile.ZipFile(docx_path, 'r') as docx:
+            # Verificar si existe el archivo numbering.xml
+            if 'word/numbering.xml' in docx.namelist():
+                # Extraer el archivo numbering.xml
+                numbering_xml = docx.read('word/numbering.xml')
+                # Parsear el XML
+                numbering_tree = etree.fromstring(numbering_xml)
+
+                # Buscar todas las definiciones abstractas de numeración
+                for abstract_num in numbering_tree.findall('.//w:abstractNum', namespaces=numbering_tree.nsmap):
+                    abstract_num_id = abstract_num.get(namespaces+'abstractNumId')
+                    # Revisar los niveles dentro de la definición abstracta
+                    for lvl in abstract_num.findall('.//w:lvl', namespaces=abstract_num.nsmap):
+                        num_fmt = lvl.find('.//w:numFmt', lvl.nsmap).get(namespaces+'val')
+                        ilvl = lvl.get(namespaces+'ilvl')
+
+                        # Asignar el tipo según el valor de numFmt
+                        if abstract_num_id not in numbering_map:
+                            numbering_map[abstract_num_id] = {}
+
+                        numbering_map[abstract_num_id][ilvl] = num_fmt
+
+                # Relacionar numId con su abstractNumId
+                for num in numbering_tree.findall('.//w:num', namespaces=numbering_tree.nsmap):
+                    num_id = num.get(namespaces+'numId')
+                    abstract_num_id = num.find('.//w:abstractNumId', namespaces=num.nsmap).get(namespaces+'val')
+                    if abstract_num_id in numbering_map:
+                        numbering_map[abstract_num_id]['numId'] = num_id
+            else:
+                numbering_map = None
+
+        return numbering_map
+
+
+    def extractContent(self, doc, doc_path):
+
+        list_types = self.extract_numbering_info(doc_path)
 
         def extrae_Tabla(element):
             # Inicializa la estructura HTML de la tabla
@@ -100,6 +143,10 @@ class functionsDocx:
         content = []
         images = []
 
+        current_list = []
+        current_num_id = None
+        numId = None
+        namespaces_p = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
         for element in doc.element.body:            
             if isinstance(element, CT_P):
                 obj = {}
@@ -137,7 +184,42 @@ class functionsDocx:
 
                 if not obj_image:
                     paragraph = element
-                    obj['text'] = paragraph.text
+                    #obj['text'] = paragraph.text
+                    text_paragraph = []
+
+                    # Determina si es parte de una lista
+                    is_numPr = paragraph.find('.//w:numPr', namespaces=paragraph.nsmap) is not None
+
+                    # obtiene id y nivel
+                    if is_numPr:
+                        numPr = paragraph.find('.//w:numPr', namespaces=paragraph.nsmap)
+                        numId = numPr.find('.//w:numId', namespaces=paragraph.nsmap).get(namespaces_p + 'val')
+                        type = [(key, objt) for key, objt in list_types.items() if objt['numId'] == numId]
+
+                        #Es una lista diferente
+                        if numId != current_num_id:
+                            current_num_id = numId
+                            if len(current_list) > 0:
+                                current_list.append('[/list]')
+                                objl = {}
+                                objl['type'] = 'list'
+                                objl['list'] = '\n'.join(current_list)
+                                current_list = []
+                                content.append(objl)
+                            list_type = 'bullet'
+                            if type[0][1][str(0)] == 'decimal':
+                                list_type = 'order'
+
+                            current_list.append(f'[list list-type="{list_type}"]')
+                    else:
+                        #Se terminaron de agregar elementos a la lista
+                        if len(current_list) > 0:
+                            current_list.append('[/list]')
+                            objl = {}
+                            objl['type'] = 'list'
+                            objl['list'] = '\n'.join(current_list)
+                            current_list = []
+                            content.append(objl)
 
                     for run in paragraph.findall('.//w:r', namespaces=paragraph.nsmap):
                         sz_element = run.find('.//w:sz', namespaces=run.nsmap)
@@ -159,6 +241,18 @@ class functionsDocx:
                             obj['font_size'] = int(font_size_value)/2
                             obj['bold'] = run.find('.//w:b', namespaces=run.nsmap) is not None
                             obj['italic'] = run.find('.//w:i', namespaces=run.nsmap) is not None
+                            if obj['italic']:
+                                text_paragraph.append('[style name="italic"]' + run.text + '[/style]')
+                            else:
+                                text_paragraph.append(run.text)
+                    
+                    obj['text'] = ' '.join(text_paragraph)
+
+                    if is_numPr:
+                        if 'font_size' in obj:
+                            del obj['font_size']
+                        current_list.append(f'[list-item]{obj["text"]}[/list-item]')
+                        
             
             elif isinstance(element, CT_Tbl):
                 table = element
