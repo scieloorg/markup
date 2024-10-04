@@ -11,7 +11,7 @@ from .choices import order_labels
 def get_labels(title):
     article_docx = ArticleDocx.objects.get(title=title)
     doc = functionsDocx.openDocx(article_docx.file.path)
-    content = functionsDocx.extractContent(doc)
+    content = functionsDocx().extractContent(doc, article_docx.file.path)
     article_docx_markup = ArticleDocxMarkup.objects.create()
     text_title = ''
     text_paragraph = ''
@@ -21,7 +21,6 @@ def get_labels(title):
     header = False
     body = False
     back = False
-
 
     label_next = None
     reset = False
@@ -46,6 +45,15 @@ def get_labels(title):
                 'paragraph' : item.get('table')
             }
 
+            stream_data_body.append(obj)
+
+        elif item.get('type') == 'list':
+            obj = {}
+            obj['type'] = 'paragraph'
+            obj['value'] = {
+                'label' : '<list>',
+                'paragraph' : item.get('list')
+            }
             stream_data_body.append(obj)
 
         elif item.get('text') == '':
