@@ -1,19 +1,20 @@
 front_labels = [
-    ('<subject>', '<subject>'),
+    ('<abstract>', '<abstract>'),
+    ('<aff>', '<aff>'),
     ('<article-id>', '<article-id>'),
     ('<article-title>', '<article-title>'),
-    ('<trans-title>', '<trans-title>'),
+    ('<author-notes>', '<author-notes>'), 
     ('<contrib>', '<contrib>'),
-    ('<aff>', '<aff>'),
-    ('<author-notes>', '<author-notes>'),
-    ('<abstract>', '<abstract>'),
-    ('<trans-abstract>', '<trans-abstract>'),
-    ('<kwd-group>', '<kwd-group>'),
+    ('<fig>', '<fig>'),
     ('<history>', '<history>'),
+    ('<kwd-group>', '<kwd-group>'),
+    ('<list>', '<list>'),
     ('<p>', '<p>'),
     ('<sec>', '<sec>'),
+    ('<subject>', '<subject>'),
     ('<table>', '<table>'),
-    ('<fig>', '<fig>'),
+    ('<trans-abstract>', '<trans-abstract>'),
+    ('<trans-title>', '<trans-title>'),
 ]
 
 order_labels = {
