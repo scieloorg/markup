@@ -96,3 +96,5 @@ certifi>=2023.7.22 # not directly required, pinned by Snyk to avoid a vulnerabil
 requests>=2.31.0 # not directly required, pinned by Snyk to avoid a vulnerability
 
 python-docx==1.1.2
+huggingface-hub==0.26.1
+llama-cpp-python==0.3.1
