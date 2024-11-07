@@ -14,18 +14,39 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
   build-essential \
   git \
   # psycopg2 dependencies
-  libpq-dev
+  libpq-dev \
+  # other dependencies
+  software-properties-common \
+  libopenblas-dev \
+  libomp-dev
+
+# Instalar gcc-10 y g++-10 en Debian Bullseye
+RUN apt-get update && \
+    apt-get install -y gcc-10 g++-10 ninja-build cmake && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 50 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-10 50 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Instalar ninja-build y cmake
+RUN apt-get install -y ninja-build cmake
+
+# Configurar variables de entorno para compilar con BLAS y SIMD
+ENV CFLAGS="-mfma -mavx2" \
+    CXXFLAGS="-mfma -mavx2" \
+    CMAKE_ARGS="-DGML_BLAS=ON -DGGML_BLAS_VENDOR=OpenBLAS"
+
+# Actualizar pip, setuptools y wheel antes de instalar dependencias
+RUN python -m pip install --upgrade pip setuptools wheel
 
 # Requirements are installed here to ensure they will be cached.
 COPY ./requirements .
 
 # Update pip
-RUN python -m pip install --upgrade pip
+#RUN python -m pip install --upgrade pip
 
 # Create Python Dependency and Sub-Dependency Wheels.
 RUN pip wheel --wheel-dir /usr/src/app/wheels  \
   -r ${BUILD_ENVIRONMENT}.txt
-
 
 # Python 'run' stage
 FROM python as python-run-stage
@@ -83,3 +104,4 @@ RUN chmod +x /start-flower
 COPY . ${APP_HOME}
 
 ENTRYPOINT ["/entrypoint"]
+
