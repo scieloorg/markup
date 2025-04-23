@@ -6,6 +6,7 @@ from lxml import etree, objectify
 from wagtail.images import get_image_model
 from django.core.files.base import ContentFile
 import zipfile
+import os
 
 ImageModel = get_image_model()
 
@@ -15,6 +16,32 @@ class functionsDocx:
     def openDocx(filename):
         doc = docx.Document(filename)
         return doc
+
+    # Función: solo reemplaza mfenced que NO tengan atributos open/close y que usen |
+    def replace_mfenced_pipe_only(self, mathml_root):
+        mml_ns = "http://www.w3.org/1998/Math/MathML"
+        for mfenced in mathml_root.xpath(".//mml:mfenced", namespaces={"mml": mml_ns}):
+            has_open = mfenced.get("open")
+            has_close = mfenced.get("close")
+            separators = mfenced.get("separators", "")
+
+            # Solo reemplazar si: no tiene open/close y usa barra
+            if not has_open and not has_close and separators == "|":
+                mrow = etree.Element(f"{{{mml_ns}}}mrow")
+
+                mo_open = etree.Element(f"{{{mml_ns}}}mo")
+                mo_open.text = "("
+                mo_close = etree.Element(f"{{{mml_ns}}}mo")
+                mo_close.text = ")"
+
+                mrow.append(mo_open)
+                for child in list(mfenced):
+                    mrow.append(child)
+                mrow.append(mo_close)
+
+                parent = mfenced.getparent()
+                if parent is not None:
+                    parent.replace(mfenced, mrow)
 
 
     def extract_numbering_info(self, docx_path):
@@ -60,6 +87,16 @@ class functionsDocx:
     def extractContent(self, doc, doc_path):
 
         list_types = self.extract_numbering_info(doc_path)
+
+        # Obtener el directorio actual del archivo .py
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+        # Construir la ruta completa al archivo XSLT
+        xslt_path = os.path.join(BASE_DIR, "omml2mml.xsl")
+
+        # Cargar XSLT y prepararlo
+        xslt = etree.parse(xslt_path)
+        transform = etree.XSLT(xslt)
 
         def extrae_Tabla(element):
             # Inicializa la estructura HTML de la tabla
@@ -153,10 +190,11 @@ class functionsDocx:
 
                 namespaces = {
                     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
                 }
 
                 obj_image = False
+                obj_formula = False
 
                 for drawing in element.findall('.//w:drawing', namespaces=namespaces):
                     if drawing.find('.//a:blip', namespaces=namespaces) is not None:
@@ -181,10 +219,24 @@ class functionsDocx:
                                 # Referenciar la imagen guardada en el objeto
                                 obj['type'] = 'image'
                                 obj['image'] = wagtail_image.id
+                
+                
+                ns_math = {
+                    'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math',
+                    'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+                }
 
+                for formula in element.findall('.//m:oMathPara', namespaces=ns_math):
+                    obj_formula = True
+                    mathml_result = transform(formula)
+                    mathml_root = etree.fromstring(str(mathml_result))
+                    self.replace_mfenced_pipe_only(mathml_root)
+                    obj['type'] = 'formula'
+                    obj['formula'] = etree.tostring(mathml_root, pretty_print=True, encoding='unicode')
+                
+                
                 if not obj_image:
                     paragraph = element
-                    #obj['text'] = paragraph.text
                     text_paragraph = []
 
                     # Determina si es parte de una lista
@@ -221,38 +273,58 @@ class functionsDocx:
                             current_list = []
                             content.append(objl)
 
-                    for run in paragraph.findall('.//w:r', namespaces=paragraph.nsmap):
-                        sz_element = run.find('.//w:sz', namespaces=run.nsmap)
-                        if sz_element is not None:
-                            xml_string = etree.tostring(sz_element, pretty_print=True, encoding='unicode')
-                            namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+                    for child in paragraph:
+                        if child.tag == '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r':
+                            sz_element = child.find('.//w:sz', namespaces=child.nsmap)
+                            if sz_element is not None:
+                                xml_string = etree.tostring(sz_element, pretty_print=True, encoding='unicode')
+                                namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 
-                            size_element = objectify.fromstring(xml_string)
-                            font_size_value = size_element.get(namespaces+'val')
+                                size_element = objectify.fromstring(xml_string)
+                                font_size_value = size_element.get(namespaces+'val')
 
 
-                            color_element = run.find('.//w:color', namespaces=run.nsmap)
-                            if color_element is not None:
-                                xml_string_color = etree.tostring(color_element, pretty_print=True, encoding='unicode')
-                                object_element = objectify.fromstring(xml_string_color)
-                                color_value = object_element.get(namespaces + 'val')
-                                obj['color'] = color_value
+                                color_element = child.find('.//w:color', namespaces=child.nsmap)
+                                if color_element is not None:
+                                    xml_string_color = etree.tostring(color_element, pretty_print=True, encoding='unicode')
+                                    object_element = objectify.fromstring(xml_string_color)
+                                    color_value = object_element.get(namespaces + 'val')
+                                    obj['color'] = color_value
 
-                            obj['font_size'] = int(font_size_value)/2
-                            obj['bold'] = run.find('.//w:b', namespaces=run.nsmap) is not None
-                            obj['italic'] = run.find('.//w:i', namespaces=run.nsmap) is not None
-                            if obj['italic']:
-                                text_paragraph.append('[style name="italic"]' + run.text + '[/style]')
-                            else:
-                                text_paragraph.append(run.text)
-                    
-                    obj['text'] = ' '.join(text_paragraph)
+                                obj['font_size'] = int(font_size_value)/2
+                                obj['bold'] = child.find('.//w:b', namespaces=child.nsmap) is not None
+                                obj['italic'] = child.find('.//w:i', namespaces=child.nsmap) is not None
+                                if obj['italic']:
+                                    text_paragraph.append('[style name="italic"]' + child.text + '[/style]')
+                                else:
+                                    text_paragraph.append(child.text)
 
-                    if is_numPr:
-                        if 'font_size' in obj:
-                            del obj['font_size']
-                        current_list.append(f'[list-item]{obj["text"]}[/list-item]')
-                        
+                        if child.tag == f"{{{ns_math['m']}}}oMath":
+                            if 'text' not in obj or not isinstance(obj['text'], list):
+                                obj['type'] = 'compound'
+                                obj['text'] = []
+                            if len(text_paragraph) > 0:
+                                obj2 = {}
+                                obj2['type'] = 'text'
+                                obj2['value'] = ' '.join(text_paragraph)
+                                obj['text'].append(obj2)
+                                text_paragraph = []
+
+                            mathml_result = transform(child)
+                            mathml_root = etree.fromstring(str(mathml_result))
+                            self.replace_mfenced_pipe_only(mathml_root)
+                            obj2 = {}
+                            obj2['type'] = 'formula'
+                            obj2['value'] = etree.tostring(mathml_root, pretty_print=True, encoding='unicode')
+                            obj['text'].append(obj2)
+
+                    if 'text' not in obj:    
+                        obj['text'] = ' '.join(text_paragraph)
+
+                        if is_numPr:
+                            if 'font_size' in obj:
+                                del obj['font_size']
+                            current_list.append(f'[list-item]{obj["text"]}[/list-item]')
             
             elif isinstance(element, CT_Tbl):
                 table = element
