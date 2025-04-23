@@ -11,10 +11,14 @@ front_labels = [
     ('<list>', '<list>'),
     ('<p>', '<p>'),
     ('<sec>', '<sec>'),
+    ('<sub-sec>', '<sub-sec>'),
     ('<subject>', '<subject>'),
     ('<table>', '<table>'),
+    ('<table-caption>', '<table-caption>'),
     ('<trans-abstract>', '<trans-abstract>'),
     ('<trans-title>', '<trans-title>'),
+    ('<formula>', '<formula>'),
+    
 ]
 
 order_labels = {
@@ -79,6 +83,16 @@ order_labels = {
         'size' : 16,
         'bold' : True,
         'next' : None
+    },
+    '<sub-sec>':{
+        'size' : 12,
+        'italic' : True,
+        'next' : None
+    },
+    '<sub-sec-2>':{
+        'size' : 14,
+        'bold' : True,
+        'next' : None 
     },
 }
 
