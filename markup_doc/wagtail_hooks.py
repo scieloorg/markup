@@ -22,24 +22,38 @@ from wagtail.admin.views import generic
 
 from django.shortcuts import redirect, get_object_or_404
 from django.views import View
-import requests
+
+from wagtail.snippets.models import register_snippet
+from wagtail.snippets.views.snippets import SnippetViewSet
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.db import transaction
 
 
-class ArticleDocxCreateView(CreateView):
-    def form_valid(self, form):
-        self.object = form.save_all(self.request.user)
-        self.object.estatus = 1
-        self.object.save()
-        get_labels.delay(self.object.title)
-        return HttpResponseRedirect(self.get_success_url())
+@receiver(post_save, sender=UploadDocx)
+def handle_uploadxml_create(sender, instance, created, **kwargs):
+    if created:
+        # Establece estatus si no viene del formulario
+        if instance.estatus != 1:
+            instance.estatus = 1
+            instance.save(update_fields=["estatus"])
+        
+        # Lanza tarea Celery con el título
+        transaction.on_commit(lambda: get_labels.delay(instance.title))
 
 
-class ArticleDocxEditView(EditView):
-    def form_valid(self, form):
-        self.instance.updated_by = self.request.user
-        self.instance.save()
-        update_xml.delay(self.instance.id)
-        return HttpResponseRedirect(self.get_success_url())
+@receiver(post_save, sender=MarkupXML)
+def trigger_update_xml(sender, instance, created, **kwargs):
+    if not created:
+        prev = MarkupXML.objects.get(id=instance.id)
+        if prev.estatus == 3:
+            MarkupXML.objects.filter(id=instance.id).update(estatus=2)
+        else:
+            if instance.estatus != 1:
+                #MarkupXML.objects.filter(id=instance.id).update(estatus=1)
+                instance.estatus = 1
+                instance.save(update_fields=["estatus"])
+                transaction.on_commit(lambda: update_xml.delay(instance.id, instance.content.get_prep_value(), instance.content_body.get_prep_value()))
 
 
 class ArticleDocxAdmin(ModelAdmin):
@@ -78,9 +92,8 @@ class ArticleDocxMarkupAdmin(ModelAdmin):
     list_per_page = 20
 
 
-class UploadDocxAdmin(ModelAdmin):
+class UploadDocxViewSet(SnippetViewSet):
     model = UploadDocx
-    create_view_class = ArticleDocxCreateView
     menu_label = _("UploadDocx")
     menu_icon = "folder"
     menu_order = 1
@@ -94,10 +107,9 @@ class UploadDocxAdmin(ModelAdmin):
         "estatus"
     )
 
-class MarkupXMLAdmin(ModelAdmin):
+
+class MarkupXMLViewSet(SnippetViewSet):
     model = MarkupXML
-    create_view_class = ArticleDocxMarkupCreateView
-    edit_view_class = ArticleDocxEditView
     menu_label = _("MarkupXML")
     menu_icon = "folder"
     menu_order = 1
@@ -112,10 +124,5 @@ class MarkupXMLAdmin(ModelAdmin):
     list_per_page = 20
 
 
-class MarkupAdminGroup(ModelAdminGroup):
-    menu_label = _("Markup")
-    menu_icon = "folder-open-inverse"
-    menu_order = 1
-    items = (UploadDocxAdmin, MarkupXMLAdmin)
-
-modeladmin_register(MarkupAdminGroup)
+register_snippet(UploadDocxViewSet)
+register_snippet(MarkupXMLViewSet)
