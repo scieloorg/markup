@@ -117,6 +117,8 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     "core.users",
     "core_settings",
+    "core",
+    "markup_doc"
     # Your stuff: custom apps go here
 ]
 
@@ -462,3 +464,6 @@ MAINTENANCE_MODE_TEMPLATE = "503.html"
 # by default, a file named "maintenance_mode_state.txt" will be created in the settings.py directory
 # you can customize the state file path in case the default one is not writable
 MAINTENANCE_MODE_STATE_FILE_PATH = "maintenance_mode_state.txt"
+
+#Aumento en el límite de campos
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000
