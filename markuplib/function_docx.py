@@ -5,7 +5,7 @@ from docx.oxml.ns import qn
 from lxml import etree, objectify
 from wagtail.images import get_image_model
 from django.core.files.base import ContentFile
-import zipfile
+import re, zipfile
 import os
 
 ImageModel = get_image_model()
@@ -42,6 +42,7 @@ class functionsDocx:
                 parent = mfenced.getparent()
                 if parent is not None:
                     parent.replace(mfenced, mrow)
+        return mathml_root
 
 
     def extract_numbering_info(self, docx_path):
@@ -98,6 +99,68 @@ class functionsDocx:
         xslt = etree.parse(xslt_path)
         transform = etree.XSLT(xslt)
 
+        def match_paragraph(text):
+            keywords = r'(?i)(palabra.*clave.*:|palavra.*chave.*:|palavra.*-.*chave.*:|keyword.*:)'
+            history = r'\d{2}/\d{2}/\d{4}'
+            corresp = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            abstract = r'(?i)resumen|resumo|abstract'
+
+            if re.search(keywords, text):
+                return '<keywords>'
+            if re.search(history, text):
+                return '<history>'
+            if re.search(corresp, text):
+                return '<corresp>'
+            if re.search(abstract, text):
+                return '<abstract>'
+            return False
+
+        def matches_section(a, b):
+            try:
+                return (
+                    a.get('size') == b.get('size') and
+                    a.get('bold') == b.get('bold') and
+                    a.get('isupper') == b.get('isupper')
+                )
+            except Exception as e:
+                print(f"Error comparando secciones: {e}")
+                return False
+
+        def section_priority(sections):
+            return (-sections['size'], not sections['bold'], not sections['isupper'])
+
+        def identify_section(sections, size, bold, text):
+            if size == 0:
+                return sections
+
+            isupper = text.isupper()
+            s_id = {'size': size, 'bold': bold, 'isupper': isupper, 'count': 0}
+            
+            if len(sections) == 0:
+                sections.append(s_id)
+                return sections
+
+            for section in sections:
+                if matches_section(s_id, section):
+                    section['count'] += 1
+                    return sections
+            
+            sections.append(s_id)
+            return sections
+
+        def clean_labels(text):
+            # Eliminar etiquetas tipo [kwd] o [sectitle], incluyendo atributos
+            extract_label = re.sub(r'\[/?\w+(?:\s+[^\]]+)?\]', '', text)
+
+            # Reemplazar múltiples espacios por uno solo
+            clean_text = re.sub(r'\s+', ' ', extract_label)
+
+            # Eliminar espacio antes de los signos de puntuación
+            clean_text = re.sub(r'\s+([;:,.])', r'\1', clean_text)
+
+            # Quitar espacios iniciales/finales
+            return clean_text.strip()
+
         def extrae_Tabla(element):
             # Inicializa la estructura HTML de la tabla
             html = "<table border='1'>\n"
@@ -134,8 +197,13 @@ class functionsDocx:
                             # Busca el total de filas combinadas contando hacia abajo
                             k = i + 1
                             while k < len(element.xpath('.//w:tr')):
-                                next_cell = element.xpath('.//w:tr')[k].xpath('.//w:tc')[j]
-                                next_merge = next_cell.xpath('.//w:tcPr//w:vMerge')
+                                try:
+                                    next_cell = element.xpath('.//w:tr')[k].xpath('.//w:tc')[j]
+                                    next_merge = next_cell.xpath('.//w:tcPr//w:vMerge')
+                                except:
+                                    next_cell = None
+                                    next_merge = None
+
                                 if next_merge and next_merge[0].get(qn('w:val')) is None:
                                     rowspan += 1
                                 else:
@@ -157,6 +225,7 @@ class functionsDocx:
                     if not v_merge_fin:
                         # Obtén el contenido del texto de la celda
                         cell_text = "<br>".join([t.text for t in cell.xpath('.//w:t')])
+                        cell_text = clean_labels(cell_text)
 
                         # Determina el tag a usar (th para el encabezado, td para celdas normales)
                         tag = "th" if i == 0 else "td"
@@ -178,13 +247,17 @@ class functionsDocx:
             return html
 
         content = []
+        sections = []
         images = []
+        found_fb = False
+        #Palabras a buscar como indicador del primer bloque
+        start_text = ['introducción', 'introduction', 'introdução']
 
         current_list = []
         current_num_id = None
         numId = None
         namespaces_p = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-        for element in doc.element.body:            
+        for element in doc.element.body:        
             if isinstance(element, CT_P):
                 obj = {}
 
@@ -230,7 +303,7 @@ class functionsDocx:
                     obj_formula = True
                     mathml_result = transform(formula)
                     mathml_root = etree.fromstring(str(mathml_result))
-                    self.replace_mfenced_pipe_only(mathml_root)
+                    mathml_root = self.replace_mfenced_pipe_only(mathml_root)
                     obj['type'] = 'formula'
                     obj['formula'] = etree.tostring(mathml_root, pretty_print=True, encoding='unicode')
                 
@@ -275,29 +348,90 @@ class functionsDocx:
 
                     for child in paragraph:
                         if child.tag == '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r':
+                            namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
                             sz_element = child.find('.//w:sz', namespaces=child.nsmap)
+                            obj['font_size'] = 0
                             if sz_element is not None:
                                 xml_string = etree.tostring(sz_element, pretty_print=True, encoding='unicode')
-                                namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-
                                 size_element = objectify.fromstring(xml_string)
                                 font_size_value = size_element.get(namespaces+'val')
-
-
-                                color_element = child.find('.//w:color', namespaces=child.nsmap)
-                                if color_element is not None:
-                                    xml_string_color = etree.tostring(color_element, pretty_print=True, encoding='unicode')
-                                    object_element = objectify.fromstring(xml_string_color)
-                                    color_value = object_element.get(namespaces + 'val')
-                                    obj['color'] = color_value
-
                                 obj['font_size'] = int(font_size_value)/2
-                                obj['bold'] = child.find('.//w:b', namespaces=child.nsmap) is not None
-                                obj['italic'] = child.find('.//w:i', namespaces=child.nsmap) is not None
-                                if obj['italic']:
-                                    text_paragraph.append('[style name="italic"]' + child.text + '[/style]')
-                                else:
-                                    text_paragraph.append(child.text)
+
+                            color_element = child.find('.//w:color', namespaces=child.nsmap)
+                            if color_element is not None:
+                                xml_string_color = etree.tostring(color_element, pretty_print=True, encoding='unicode')
+                                object_element = objectify.fromstring(xml_string_color)
+                                color_value = object_element.get(namespaces + 'val')
+                                obj['color'] = color_value
+
+                            b_tag = child.find('.//w:b', namespaces=child.nsmap)
+                            if b_tag is not None:
+                                val = b_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+                                obj['bold'] = (val is None or val in ['1', 'true', 'True'])
+                            else:
+                                obj['bold'] = False
+
+                            i_tag = child.find('.//w:i', namespaces=child.nsmap)
+                            if i_tag is not None:
+                                val = i_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+                                obj['italic'] = (val is None or val in ['1', 'true', 'True'])
+                            else:
+                                obj['italic'] = False
+                            
+                            s_tag = child.find('.//w:spacing', namespaces=child.nsmap)
+                            if s_tag is not None:
+                                val = s_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}before')
+                                obj['spacing'] = not (val is None)
+                            else:
+                                obj['spacing'] = False
+
+                            #identifica sección
+                            sections = identify_section(sections, obj['font_size'], obj['bold'] , child.text)
+
+                            if obj['italic']:
+                                text_paragraph.append('[style name="italic"]' + clean_labels(child.text) + '[/style]')
+                            else:
+                                text_paragraph.append(clean_labels(child.text))
+
+                            paraph = match_paragraph(child.text)
+                            if paraph:
+                                obj['paraph'] = paraph
+
+                            found_fb = any(word in child.text.lower() for word in start_text)
+                            
+                            #Si se encontró alguna palabra, incluye todo lo anterior en un sólo bloque
+                            if found_fb:
+                                sections = [sections[-1]]
+                                first_block = ''
+                                tmp_content = []
+                                abstract_mode = False 
+
+                                for c in content:
+                                    if abstract_mode:
+                                        if c['text'] == '' or c['spacing'] is True:
+                                            abstract_mode = False
+                                        else:
+                                            tmp_content.append(c)
+                                            continue
+
+                                    if 'paraph' in c:
+                                        tmp_content.append(c)
+                                        abstract_mode = False
+                                        if c['paraph'] == '<abstract>':
+                                            abstract_mode = True
+                                            continue                                        
+                                    else:
+                                        if 'text' in c:
+                                            first_block = first_block + "\n" + c["text"]
+                                        if 'table' in c:
+                                            first_block = first_block + "\n" + c["table"]
+
+                                obj_b = {}
+                                obj_b['type'] = 'first_block'
+                                obj_b['text'] = first_block
+                                tmp_content.append(obj_b)
+                                content = tmp_content
+                                start_text = []
 
                         if child.tag == f"{{{ns_math['m']}}}oMath":
                             if 'text' not in obj or not isinstance(obj['text'], list):
@@ -332,8 +466,7 @@ class functionsDocx:
                 obj = {}
                 obj['type'] = 'table'
                 obj['table'] = table_data
-                
-            
-            content.append(obj)
 
-        return content
+            content.append(obj)
+        sections.sort(key=section_priority)
+        return sections, content
