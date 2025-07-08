@@ -1,10 +1,12 @@
 import os
 import sys
+import requests
 
 from django.db import models
 from django.utils.translation import gettext as _
 from django import forms
 from django.utils.html import format_html
+from django.urls import reverse
 
 from modelcluster.fields import ParentalKey
 from modelcluster.models import ClusterableModel
@@ -13,6 +15,7 @@ from wagtailautocomplete.edit_handlers import AutocompletePanel
 from wagtail.documents.models import Document
 
 from core.forms import CoreAdminModelForm
+from core.choices import LANGUAGE
 from core.models import (
     CommonControlField,
     Language,
@@ -27,7 +30,10 @@ class ReadOnlyFileWidget(forms.Widget):
     def render(self, name, value, attrs=None, renderer=None):
         if value:
             # Muestra el archivo como un enlace de descarga
-            return format_html('<a href="{}" target="_blank" download>{}</a>', value.url, value.name.split('/')[-1])
+            #return format_html('<a href="{}" target="_blank" download>{}</a>', value.url, value.name.split('/')[-1])
+            instance = value.instance
+            url = reverse('generate_xml', args=[instance.pk])
+            return format_html('<a href="{}" target="_blank" download>Download XML</a>', url)
         return ""
 
 # Create your models here.
@@ -79,7 +85,7 @@ class ParagraphWithLanguageBlock(StructBlock):
                 label=_("Label")
             )
     language = ChoiceBlock(
-        queryset=Language.objects.all(),
+        choices=LANGUAGE,
         required=False,
         label="Language"
     )
@@ -132,12 +138,14 @@ class AuthorParagraphBlock(ParagraphBlock):
     surname = TextBlock(required=False, label=_("Surname"))
     given_names = TextBlock(required=False, label=_("Given names"))
     orcid = TextBlock(required=False, label=_("Orcid"))
+    affid = TextBlock(required=False, label=_("Aff id"))
 
     class Meta:
         label = _("Author Paragraph")
 
 
 class AffParagraphBlock(ParagraphBlock):
+    affid = TextBlock(required=False, label=_("Aff id"))
     orgname = TextBlock(required=False, label=_("Orgname"))
     orgdiv2 = TextBlock(required=False, label=_("Orgdiv2"))
     orgdiv1 = TextBlock(required=False, label=_("Orgdiv1"))
@@ -156,6 +164,7 @@ class RefNameBlock(StructBlock):
 
 class RefParagraphBlock(ParagraphBlock):
     reftype = TextBlock(required=False, label=_("Ref type"))
+    refid = TextBlock(required=False, label=_("Ref id"))
     #authors = ListBlock(RefNameBlock(), label=_("Authors"))
     authors = StreamBlock([
         ('Author', RefNameBlock()),
@@ -172,6 +181,65 @@ class RefParagraphBlock(ParagraphBlock):
         label = _("Ref Paragraph")
 
 
+class CollectionValuesModel(models.Model):
+    acron = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=255)
+
+    autocomplete_search_field = "acron"
+
+    def autocomplete_label(self):
+        return str(self)
+
+    def __str__(self):
+        return f"{self.acron.upper()} - {self.name}"
+
+
+class CollectionModel(models.Model):
+    collection = models.ForeignKey(CollectionValuesModel, null=True, blank=True, on_delete=models.SET_NULL)
+
+    autocomplete_search_field = "collection.acron"
+
+    def autocomplete_label(self):
+        return str(self)
+
+    panels = [
+        AutocompletePanel('collection'),
+    ]
+
+    def __str__(self):
+        return f"{self.collection.acron.upper()} - {self.collection.acron}"
+
+
+class JournalModel(models.Model):
+    title = models.TextField(_("Title"), null=True, blank=True)
+    short_title = models.TextField(_("Short Title"), null=True, blank=True)
+    title_nlm = models.TextField(_("NLM Title"), null=True, blank=True)
+    acronym = models.TextField(_("Acronym"), null=True, blank=True)
+    issn = models.TextField(_("ISSN (id SciELO)"), null=True, blank=True)
+    pissn = models.TextField(_("Print ISSN"), null=True, blank=True)
+    eissn = models.TextField(_("Electronic ISSN"), null=True, blank=True)
+    pubname = models.TextField(_("Publisher Name"), null=True, blank=True)
+
+    autocomplete_search_field = "title"
+
+    class Meta:
+        unique_together = ('title',)
+
+    def autocomplete_label(self):
+        return str(self)
+
+    def __str__(self):
+        return self.title
+
+
+def get_default_collection_acron():
+    try:
+        obj = CollectionModel.objects.select_related('collection').first()
+        return obj.collection.acron if obj and obj.collection else ''
+    except Exception:
+        return ''
+
+
 class ArticleDocxMarkup(CommonControlField, ClusterableModel):
     title = models.TextField(_("Document Title"), null=True, blank=True)
     file = models.FileField(
@@ -181,6 +249,59 @@ class ArticleDocxMarkup(CommonControlField, ClusterableModel):
         upload_to='uploads_docx/',
     )
     estatus = models.IntegerField(default=0) 
+
+    collection = models.CharField(max_length=10, default=get_default_collection_acron)
+    journal = models.ForeignKey(JournalModel, null=True, blank=True, on_delete=models.SET_NULL)
+
+    journal_title = models.TextField(_("Journal Title"), null=True, blank=True)
+    acronym = models.TextField(_("Acronym"), null=True, blank=True)
+    short_title = models.TextField(_("Short Title"), null=True, blank=True)
+    title_nlm = models.TextField(_("NLM Title"), null=True, blank=True)
+    issn = models.TextField(_("ISSN (id SciELO)"), null=True, blank=True)
+    pissn = models.TextField(_("Print ISSN"), null=True, blank=True)
+    eissn = models.TextField(_("Electronic ISSN"), null=True, blank=True)
+    nimtitle = models.TextField(_("Nimtitle"), null=True, blank=True)
+    pubname = models.TextField(_("Publisher Name"), null=True, blank=True)
+    license = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name=_("License (URL)")
+    )
+    vol = models.IntegerField(
+        verbose_name=_("Volume"),
+        null=True,
+        blank=True
+    )
+    supplvol = models.IntegerField(
+        verbose_name=_("Suppl Volume"),
+        null=True,
+        blank=True
+    )
+    issue = models.IntegerField(
+        verbose_name=_("Issue"),
+        null=True,
+        blank=True
+    )
+    supplno = models.IntegerField(
+        verbose_name=_("Suppl Num"),
+        null=True,
+        blank=True
+    )
+    issid_part = models.TextField(_("Isid Part"), null=True, blank=True)
+    dateiso = models.TextField(_("Dateiso"), null=True, blank=True)
+    month = models.TextField(_("Month/Season"), null=True, blank=True)
+    fpage = models.TextField(_("First Page"), null=True, blank=True)
+    seq = models.TextField(_("@Seq"), null=True, blank=True)
+    lpage = models.TextField(_("Last Page"), null=True, blank=True)
+    elocatid = models.TextField(_("Elocation ID"), null=True, blank=True)
+    order = models.TextField(_("Order (In TOC)"), null=True, blank=True)
+    pagcount = models.TextField(_("Pag count"), null=True, blank=True)
+    doctopic = models.TextField(_("Doc Topic"), null=True, blank=True)
+    language = models.TextField(_("Language"), null=True, blank=True)
+    spsversion = models.TextField(_("Sps version"), null=True, blank=True)
+    artdate = models.TextField(_("Artdate"), null=True, blank=True)
+    ahpdate = models.TextField(_("Ahpdate"), null=True, blank=True)
 
     file_xml = models.FileField(
         null=True,
@@ -212,34 +333,9 @@ class ArticleDocxMarkup(CommonControlField, ClusterableModel):
     panels = [
         FieldPanel("title"),
         FieldPanel("file"),
+        FieldPanel("collection"),
+        AutocompletePanel("journal")
     ]
-
-    '''panels_front = [
-        FieldPanel('content'),
-        #InlinePanel("element_docx", label=_("Elements Docx")),
-    ]
-
-    panels_body = [
-        FieldPanel('content_body'),
-    ]
-
-    panels_back = [
-        FieldPanel('content_back'),
-    ]
-
-    panels_xml = [
-        FieldPanel('file_xml', widget=ReadOnlyFileWidget()),
-        FieldPanel('text_xml'),
-    ]
-
-    edit_handler = TabbedInterface(
-        [
-            ObjectList(panels_xml, heading=_("XML")),
-            ObjectList(panels_front, heading=_("Front")),
-            ObjectList(panels_body, heading=_("Body")),
-            ObjectList(panels_back, heading=_("Back")),
-        ]
-    )'''
 
     def __unicode__(self):
         return f"{self.title} | {self.estatus}"
@@ -280,10 +376,16 @@ class ArticleDocxMarkup(CommonControlField, ClusterableModel):
 
 
 class UploadDocx(ArticleDocxMarkup):
-    panels = [
+    panels_doc = [
         FieldPanel("title"),
         FieldPanel("file"),
     ]
+
+    edit_handler = TabbedInterface(
+        [
+            ObjectList(panels_doc, heading=_("Document")),
+        ]
+    )
 
     class Meta:
         proxy = True
@@ -308,9 +410,44 @@ class MarkupXML(ArticleDocxMarkup):
         FieldPanel('text_xml'),
     ]
 
+    panels_details = [
+        FieldPanel('collection'),
+        AutocompletePanel('journal'),
+        FieldPanel('journal_title'),
+        FieldPanel('short_title'),
+        FieldPanel('title_nlm'),
+        FieldPanel('acronym'),
+        FieldPanel('issn'),
+        FieldPanel('pissn'),
+        FieldPanel('eissn'),
+        FieldPanel('nimtitle'),
+        FieldPanel('pubname'),
+        FieldPanel('license'),
+        FieldPanel('vol'),
+        FieldPanel('supplvol'),
+        FieldPanel('issue'),
+        FieldPanel('supplno'),
+        FieldPanel('issid_part'),
+
+        FieldPanel('dateiso'),
+        FieldPanel('month'),
+        FieldPanel('fpage'),
+        FieldPanel('seq'),
+        FieldPanel('lpage'),
+        FieldPanel('elocatid'),
+        FieldPanel('order'),
+        FieldPanel('pagcount'),
+        FieldPanel('doctopic'),
+        FieldPanel('language'),
+        FieldPanel('spsversion'),
+        FieldPanel('artdate'),
+        FieldPanel('ahpdate'),
+    ]
+
     edit_handler = TabbedInterface(
         [
             ObjectList(panels_xml, heading=_("XML")),
+            ObjectList(panels_details, heading=_("Details")),
             ObjectList(panels_front, heading=_("Front")),
             ObjectList(panels_body, heading=_("Body")),
             ObjectList(panels_back, heading=_("Back")),

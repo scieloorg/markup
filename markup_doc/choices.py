@@ -15,6 +15,7 @@ front_labels = [
     ('<subject>', '<subject>'),
     ('<table>', '<table>'),
     ('<table-caption>', '<table-caption>'),
+    ('<title>', '<title>'),
     ('<trans-abstract>', '<trans-abstract>'),
     ('<trans-title>', '<trans-title>'),
     ('<formula>', '<formula>'),
