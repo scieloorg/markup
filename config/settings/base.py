@@ -12,6 +12,10 @@ ROOT_DIR = Path(__file__).resolve(strict=True).parent.parent.parent
 APPS_DIR = ROOT_DIR / "markup"
 env = environ.Env()
 
+#Modelo llama
+LLAMA_MODEL_DIR = ROOT_DIR / "model_ai/download"
+MODEL_LLAMA = "llama-3.2-3b-instruct-q4_k_m.gguf"
+
 READ_DOT_ENV_FILE = env.bool("DJANGO_READ_DOT_ENV_FILE", default=False)
 if READ_DOT_ENV_FILE:
     # OS environment variables take precedence over variables from .env
@@ -118,7 +122,9 @@ LOCAL_APPS = [
     "core.users",
     "core_settings",
     "core",
-    "markup_doc"
+    "markup_doc",
+    "model_ai",
+    "reference",
     # Your stuff: custom apps go here
 ]
 
@@ -379,6 +385,9 @@ NOCAPTCHA = True
 
 RECAPTCHA_PUBLIC_KEY = env.str("RECAPTCHA_PUBLIC_KEY", default="")
 RECAPTCHA_PRIVATE_KEY = env.str("RECAPTCHA_PRIVATE_KEY", default="")
+
+SESSION_COOKIE_NAME = env("SESSION_COOKIE_NAME", default="scielo_markup_sessionid")
+CSRF_COOKIE_NAME = env("CSRF_COOKIE_NAME", default="scielo_markup_csrftoken")
 
 # django rest-framework
 # ------------------------------------------------------------------------------
