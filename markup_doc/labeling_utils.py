@@ -1,6 +1,10 @@
 import requests
 import json
+import re
 from .choices import order_labels
+from rest_framework_simplejwt.tokens import RefreshToken
+from model_ai.models import LlamaModel
+
 
 def create_special_content_object(item, stream_data_body):
     """Create objects for special content types (image, table, list, compound)"""
@@ -24,8 +28,12 @@ def create_special_content_object(item, stream_data_body):
         }
 
         #Obitiene el elemento aterior
-        prev_element = stream_data_body[-1]
-        prev_element['value']['label'] = '<table-caption>'
+        try:
+            prev_element = stream_data_body[-1]
+            prev_element['value']['label'] = '<table-caption>'
+        except:
+            #No hay elemento anterior
+            pass
 
     elif item.get('type') == 'list':
         obj = {}
@@ -46,16 +54,29 @@ def create_special_content_object(item, stream_data_body):
     return obj
 
 
-def process_reference(obj):
+from django.contrib.auth import get_user_model
 
-    url = "URL_API/api/v1/mix_citation/reference/"
+User = get_user_model()
 
+
+def process_reference(num_ref, obj, user_id):
     payload = {
         'reference': obj['value']['paragraph']
     }
 
+    model = LlamaModel.objects.first()
+
+    if model.is_local:
+        user = User.objects.get(pk=user_id)
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+
+        #url = "http://172.17.0.1:8400/api/v1/mix_citation/reference/"
+        #url = "http://172.17.0.1:8009/api/v1/mix_citation/reference/"
+        url = "http://django:8000/api/v1/mix_citation/reference/"    
+
     headers = {
-        'Authorization': 'Bearer KEY',
+        'Authorization': f'Bearer {access_token}',
         'Content-Type': 'application/json'
     }
 
@@ -72,6 +93,7 @@ def process_reference(obj):
         #ref_json = json.loads(response)
         obj['type'] = 'ref_paragraph'
         obj['value']['reftype'] = ref_json.get('reftype', None)
+        obj['value']['refid'] = 'B'+str(num_ref)
         obj['value']['date'] = ref_json.get('date', None)
         obj['value']['title'] = ref_json.get('title', None)
         obj['value']['source'] = ref_json.get('source', None)
@@ -196,6 +218,116 @@ def create_labeled_object(i, item, state):
 
         label_info = result[1]
         obj['type'] = 'paragraph_with_language' if label_info.get("lan") else 'paragraph'
+
+        obj['value'] = {
+            'label': state['label'],
+            'paragraph': item.get('text')
+        }
+
+        if state['label'] == '<contrib>':
+            obj['type'] = 'author_paragraph'
+        elif state['label'] == '<aff>':
+            obj['type'] = 'aff_paragraph'
+
+    return obj, result, state
+
+
+def match_section(item, sections):
+    return {'label': '<sec>', 'body': True} if (
+        item.get('font_size') == sections[0].get('size') and
+        item.get('bold') == sections[0].get('bold') and
+        item.get('text', '').isupper() == sections[0].get('isupper')
+    ) else None
+
+
+def match_subsection(item, sections):
+    return {'label': '<sub-sec>', 'body': True} if (
+        item.get('font_size') == sections[1].get('size') and
+        item.get('bold') == sections[1].get('bold') and
+        item.get('text', '').isupper() == sections[1].get('isupper')
+    ) else None
+
+
+def create_labeled_object2(i, item, state, sections):
+    obj = {}
+    result = None
+
+    if match_section(item, sections):
+        result = match_section(item, sections)
+        state['label'] = result.get('label')
+        state['body'] = result.get('body')
+    
+    if match_subsection(item, sections):
+        result = match_subsection(item, sections)
+        state['label'] = result.get('label')
+        state['body'] = result.get('body')
+
+    if state.get('body') and re.search(r"^(refer)", item.get('text').lower()):
+        state['label'] = '<sec>'
+        state['body'] = False
+        state['back'] = True
+
+    if not result:
+        result = {'label': '<p>', 'body': state['body'], 'back': state['back']}
+        state['label'] = result.get('label')
+        state['body'] = result.get('body')
+        state['back'] = result.get('back')
+
+    if result:
+        pass
+    else:
+        if state.get('label_next'):
+            if state.get('repeat'):
+                result = match_by_regex(item.get('text'), order_labels)
+                if result:
+                    state['label'] = result[0]
+                else:
+                    result = match_by_style_and_size(item, order_labels, style='bold')
+                    if result:
+                        state['label'] = result[0]
+                        state['repeat'] = None
+                        state['reset'] = None
+                        state['label_next'] = result[1].get("next")
+                        state['body'] = result[1].get("size") == 16
+                        if state['body'] and re.search(r"^(refer)", item.get('text').lower()):
+                            state['body'] = False
+                            state['back'] = True
+            if not result:
+                result = match_next_label(item, state['label_next'], order_labels)
+                if result:
+                    state['label'] = result[0]
+                    state['label_next_reset'] = result[1].get("next")
+                    state['reset'] = result[1].get("reset", False)
+                    state['repeat'] = result[1].get("repeat", False)
+        else:
+            result = match_by_style_and_size(item, order_labels, style='bold')
+            if result:
+                state['label'] = result[0]
+                state['label_next'] = result[1].get("next")
+                if state.get('body') and re.search(r"^(refer)", item.get('text').lower()):
+                    state['body'] = False
+                    state['back'] = True
+            else:
+                result = match_by_style_and_size(item, order_labels, style='italic')
+                if result:
+                    state['label'] = re.sub(r"-\d+", "", result[0])
+                    state['label_next'] = result[1].get("next")
+                else:
+                    result = match_by_regex(item.get('text'), order_labels)
+                    if result:
+                        state['label'] = result[0]
+                    else:
+                        result = match_paragraph(item, order_labels)
+                        if result:
+                            state['label'] = result[0]
+
+    if result:
+        if state['label'] in ['<abstract>']:
+            order_labels.pop(state['label'], None)
+
+        #label_info = result[1]
+        #obj['type'] = 'paragraph_with_language' if label_info.get("lan") else 'paragraph'
+        obj['type'] = 'paragraph'
 
         obj['value'] = {
             'label': state['label'],

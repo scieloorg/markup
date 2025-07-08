@@ -1,8 +1,123 @@
 from lxml import etree
-import re
+import re, html
 
 
-def get_xml(data_front, data):
+def buscar_refid_por_surname_y_date(data_back, surname_buscado, date_buscado):
+    print(surname_buscado)
+    print(date_buscado)
+    """
+    Busca un bloque RefParagraphBlock que contenga un author con el surname especificado
+    y que coincida con la fecha dada. Retorna el refid si encuentra una coincidencia.
+    """
+    for bloque in data_back:  # Reemplaza 'contenido' con el nombre de tu StreamField
+        if bloque['type'] == 'ref_paragraph':  # o el nombre que usaste en el StreamField
+            data = bloque['value']
+
+            # Verificar la fecha
+            if str(data.get('date')) != str(date_buscado):
+                continue
+
+            # Revisar autores
+            authors = data.get('authors', [])
+
+            if ' y ' in surname_buscado or ' and ' in surname_buscado or ' & ' in surname_buscado:
+                if ' y ' in surname_buscado:
+                    surname1 = surname_buscado.split(' y ')[0].strip()
+                    surname2 = surname_buscado.split(' y ')[1].strip()
+                
+                if ' and ' in surname_buscado:
+                    surname1 = surname_buscado.split(' and ')[0].strip()
+                    surname2 = surname_buscado.split(' and ')[1].strip()
+
+                if ' & ' in surname_buscado:
+                    surname1 = surname_buscado.split(' & ')[0].strip()
+                    surname2 = surname_buscado.split(' & ')[1].strip()
+
+                for author_bloque in authors:
+                    if author_bloque['type'] == 'Author':
+                        author_data = author_bloque['value']
+                        if author_data.get('surname') == surname1:
+                            for author_bloque2 in authors:
+                                if author_bloque2['type'] == 'Author':
+                                    author_data = author_bloque2['value']
+                                    if author_data.get('surname') == surname2:
+                                        return data.get('refid')
+
+            for author_bloque in authors:
+                if author_bloque['type'] == 'Author':
+                    author_data = author_bloque['value']
+                    print(author_data.get('surname'))
+                    if author_data.get('surname') == surname_buscado:
+                        print('***'+data.get('refid'))
+                        return data.get('refid')
+
+    return None
+
+
+def extraer_citas_apa(texto, data_back):
+    """
+    Extrae citas en formato APA dentro de un texto y devuelve:
+    - la cita completa,
+    - el primer autor,
+    - el año.
+    Acepta múltiples espacios entre palabras y símbolos.
+    """
+    
+    # Preposiciones comunes en apellidos
+    preposiciones = r'(?:de|del|la|los|las|da|do|dos|das|van|von)'
+
+    # Apellido compuesto o con preposición
+    apellido = rf'[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:[-\s]+(?:{preposiciones})?\s*[A-ZÁÉÍÓÚÑ]?[a-záéíóúñ]+)*'
+
+    # Citas fuera de paréntesis
+    patron_afuera = rf'\b(?P<autor>{apellido})(?:\s+(?:et\s+al\s*\.|(y|and|&)\s+{apellido}))?\s*\(\s*(?P<anio>\d{{4}}[a-z]?)\s*\)'
+    
+    # Citas dentro de paréntesis
+    patron_adentro = rf'\(\s*(?P<autor>{apellido})(?:\s+(?:et\s+al\s*\.|(y|and|&)\s+{apellido}))?\s*,\s*(?P<anio>\d{{4}}[a-z]?)\s*\)'
+
+    patron_adentro_multiples = rf'\b(?P<autor>{apellido})(?:\s+(?:et\s+al\s*\.|(y|and|&)\s+{apellido}))?\s*,\s*(?P<anio>\d{{4}}[a-z]?)'
+
+    resultados = []
+
+    # 1. Identificar paréntesis con múltiples citas separadas por ";"
+    for paren in re.finditer(r'\(([^)]+;[^)]+)\)', texto):  # si hay punto y coma dentro del paréntesis
+        contenido = paren.group(1)
+        partes = [parte.strip() for parte in contenido.split(';')]
+        for parte in partes:
+            match = re.match(patron_adentro_multiples, parte, re.VERBOSE)
+            if match:
+                autor = match.group("autor")
+                anio = match.group("anio")
+                refid = buscar_refid_por_surname_y_date(data_back, autor, anio)
+                resultados.append({
+                    "cita": f"{parte}",  # reconstruir la cita individual
+                    "autor": autor,
+                    "anio": anio,
+                    "refid": refid
+                })
+
+    for match in re.finditer(patron_afuera, texto):
+        refid = buscar_refid_por_surname_y_date(data_back, match.group("autor"), match.group("anio"))
+        resultados.append({
+            "cita": match.group(0),
+            "autor": match.group("autor"),
+            "anio": match.group("anio"),
+            "refid": refid
+        })
+
+    for match in re.finditer(patron_adentro, texto):
+        refid = buscar_refid_por_surname_y_date(data_back, match.group("autor"), match.group("anio"))
+        resultados.append({
+            "cita": match.group(0),
+            "autor": match.group("autor"),
+            "anio": match.group("anio"),
+            "refid": refid
+        })
+
+    return resultados
+
+
+def get_xml(article_docx, data_front, data, data_back):
     # Crear el elemento raíz
     nsmap = {
         'mml': 'http://www.w3.org/1998/Math/MathML',
@@ -26,6 +141,44 @@ def get_xml(data_front, data):
     num_table = 1
     continue_t = False
 
+    node = etree.SubElement(front, 'journal-meta')
+    
+    if article_docx.acronym:
+        node_tmp = etree.SubElement(node, 'journal-id')
+        node_tmp.set('journal-id-type', 'publisher-id')
+        node_tmp.text = article_docx.acronym
+
+    if article_docx.title_nlm:
+        node_tmp = etree.SubElement(node, 'journal-id')
+        node_tmp.set('journal-id-type', 'nlm-ta')
+        node_tmp.text = article_docx.title_nlm
+
+    node_tmp = etree.SubElement(node, 'journal-title-group')
+
+    if article_docx.journal_title:
+        node_tmp2 = etree.SubElement(node_tmp, 'journal-title')
+        node_tmp2.text = article_docx.journal_title
+
+    if article_docx.short_title:
+        node_tmp2 = etree.SubElement(node_tmp, 'abbrev-journal-title')
+        node_tmp2.set('abbrev-type', 'publisher')
+        node_tmp2.text = article_docx.short_title
+
+    if article_docx.pissn:
+        node_tmp = etree.SubElement(node, 'issn')
+        node_tmp.set('pub-type', 'ppub')
+        node_tmp.text = article_docx.pissn
+
+    if article_docx.eissn:
+        node_tmp = etree.SubElement(node, 'issn')
+        node_tmp.set('pub-type', 'epub')
+        node_tmp.text = article_docx.eissn
+
+    node_tmp = etree.SubElement(node, 'publisher')
+
+    if article_docx.pubname:
+        node_tmp2 = etree.SubElement(node_tmp, 'publisher-name')
+        node_tmp2.text = article_docx.pubname
     """
     for i, d in enumerate(data_front):
         if d['value']['label'] == '<contrib>':
@@ -129,24 +282,26 @@ def get_xml(data_front, data):
             else:
                 node_table = etree.SubElement(node, 'table-wrap', attrib=attrib)
             
-            if d['value']['label'] == '<table-caption>':
-                etree.SubElement(node_table, 'label').text = d['value']['paragraph'].split('.')[0]
-                node_caption = etree.SubElement(node_table, 'caption')
-                if '.' in d['value']['paragraph']:
-                    etree.SubElement(node_caption, 'title').text = d['value']['paragraph'].split('.', 1)[1]
-                else:
-                    etree.SubElement(node_caption, 'title').text = d['value']['paragraph']
-                
-                content_table = data[i+1]['value']['paragraph']
+            if 'paragraph' in d['value']:
+                if d['value']['label'] == '<table-caption>':
+                    etree.SubElement(node_table, 'label').text = d['value']['paragraph'].split('.')[0]
+                    node_caption = etree.SubElement(node_table, 'caption')
+                    if '.' in d['value']['paragraph']:
+                        etree.SubElement(node_caption, 'title').text = d['value']['paragraph'].split('.', 1)[1]
+                    else:
+                        etree.SubElement(node_caption, 'title').text = d['value']['paragraph']
+                    
+                    content_table = data[i+1]['value']['paragraph']
 
-                continue_t = True
-            else:
-                content_table = d['value']['paragraph']
+                    continue_t = True
+                else:
+                    content_table = d['value']['paragraph']
                 
             node_table_text = content_table \
                                 .replace('[style name="italic"]', '<italic>').replace('[/style]', '</italic>')
 
-            node_table_text = node_table_text.replace('<br>','&#10;')
+            #node_table_text = node_table_text.replace('<br>','&#10;')
+            node_table_text = html.escape(node_table_text)
 
             node_table_text = etree.fromstring(f"<root>{node_table_text}</root>")
 
@@ -162,6 +317,15 @@ def get_xml(data_front, data):
             else:
                 node_p = etree.SubElement(node, 'p')
 
+            refs = extraer_citas_apa(d['value']['paragraph'].replace('[style name="italic"]', '').replace('[/style]', ''), data_back)
+            for r in refs:
+                if 'et al' in r['cita']:
+                    et_al_replace = r['cita'].replace('et al', '[style name="italic"]et al[/style]')
+                    d['value']['paragraph'] = d['value']['paragraph'].replace(et_al_replace, f"<xref reftype=\"bibr\" rid=\"{r['refid']}\">{et_al_replace}</xref>")
+                else:
+                    d['value']['paragraph'] = d['value']['paragraph'].replace(r['cita'], f"<xref reftype=\"bibr\" rid=\"{r['refid']}\">{r['cita']}</xref>")
+                                
+
             if re.search(r'^\[style name="italic"\](.*?)\[/style\]$', d['value']['paragraph']):
                 node_title.text = ''
                 ph = d['value']['paragraph'].replace('[style name="italic"]', '').replace('[/style]', '')
@@ -173,9 +337,12 @@ def get_xml(data_front, data):
             else:
                 node_p.text = d['value']['paragraph'].replace('[style name="italic"]', '<italic>').replace('[/style]', '</italic>')
                 p_text = d['value']['paragraph'].replace('[style name="italic"]', '<italic>').replace('[/style]', '</italic>')
-                node_text = etree.fromstring(f"<root>{p_text}</root>")
-                for child in node_text:
-                    node_p.append(child)
+                try:
+                    node_text = etree.fromstring(f"<root>{p_text}</root>")
+                    for child in node_text:
+                        node_p.append(child)
+                except:
+                    print(p_text)
         
         if d['value']['label'] == '<formula>':
             if subsec:
