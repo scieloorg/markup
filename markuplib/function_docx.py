@@ -85,9 +85,52 @@ class functionsDocx:
         return numbering_map
 
 
+    def extract_hiperlinks_info(self, docx_path):
+        hiperlinks = []
+        with zipfile.ZipFile(docx_path, 'r') as docx:
+            # Leer relaciones del documento
+            rels_path = 'word/_rels/document.xml.rels'
+            if rels_path in docx.namelist():
+                rels_data = docx.read(rels_path)
+                rels_root = etree.fromstring(rels_data)
+
+                # Buscar hipervínculos
+                for rel in rels_root.findall('{http://schemas.openxmlformats.org/package/2006/relationships}Relationship'):
+                    r_id = rel.attrib['Id']
+                    target = rel.attrib['Target']
+                    if rel.attrib['Type'].endswith('/hyperlink'):
+                        hiperlinks.append((r_id, target))
+
+        return dict(hiperlinks)
+
+
+    def extract_hiperlink(self, element, rels_map, namespaces):
+        links = []
+
+        # 1. Buscar hipervínculos de texto (recursivo con .//)
+        for hyperlink in element.findall('.//w:hyperlink', namespaces=namespaces):
+            r_id = hyperlink.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+            if r_id and r_id in rels_map:
+                links.append(rels_map[r_id])
+
+        # 2. Buscar hipervínculos en imágenes (recursivo con .//)
+        for hlink in element.findall('.//a:hlinkClick', namespaces=namespaces):
+            r_id = hlink.attrib.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+            if r_id and r_id in rels_map:
+                links.append(rels_map[r_id])
+
+        print("*********************************")
+        print(links)
+        return ' '.join(links) if links else None
+
+
     def extractContent(self, doc, doc_path):
 
         list_types = self.extract_numbering_info(doc_path)
+
+        hiperlinks_info = self.extract_hiperlinks_info(doc_path)
+
+        found_hiperlinks = True
 
         # Obtener el directorio actual del archivo .py
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -100,19 +143,25 @@ class functionsDocx:
         transform = etree.XSLT(xslt)
 
         def match_paragraph(text):
-            keywords = r'(?i)(palabra.*clave.*:|palavra.*chave.*:|palavra.*-.*chave.*:|keyword.*:)'
-            history = r'\d{2}/\d{2}/\d{4}'
-            corresp = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-            abstract = r'(?i)resumen|resumo|abstract'
+            keywords = r'(?im)^\s*(?:<italic>)?\s*(palabra(?:s)?\s*clave|palavras?\s*-?\s*chave|keywords?)\s*(?:</italic>)?\s*(?::|<italic>\s*:\s*</italic>)\s*(.+)$'
+            #history = r'\d{2}/\d{2}/\d{4}'
+            #corresp = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+            abstract = r'(?i)^resumen|^resumo|^abstract'
+            accepted = r'(?i)aceptado|accepted|aceited|aprovado'
+            received = r'(?i)recibido|received|recebido'
 
             if re.search(keywords, text):
-                return '<keywords>'
-            if re.search(history, text):
-                return '<history>'
-            if re.search(corresp, text):
-                return '<corresp>'
+                return '<kwd-group>'
+            #if re.search(history, text):
+                #return '<history>'
+            #if re.search(corresp, text):
+                #return '<corresp>'
             if re.search(abstract, text):
                 return '<abstract>'
+            if re.search(accepted, text):
+                return '<date-accepted>'
+            if re.search(received, text):
+                return '<date-received>'
             return False
 
         def matches_section(a, b):
@@ -149,19 +198,18 @@ class functionsDocx:
             return sections
 
         def clean_labels(text):
-            # Eliminar etiquetas tipo [kwd] o [sectitle], incluyendo atributos
-            extract_label = re.sub(r'\[/?\w+(?:\s+[^\]]+)?\]', '', text)
+            # Eliminar etiquetas cuadradas tipo [ ... ] con espacios opcionales
+            extract_label = re.sub(r'\[\s*/?\s*[\w-]+(?:\s+[^\]]+)?\s*\]', '', text)
 
             # Reemplazar múltiples espacios por uno solo
             clean_text = re.sub(r'\s+', ' ', extract_label)
 
-            # Eliminar espacio antes de los signos de puntuación
+            # Eliminar espacio antes de signos de puntuación
             clean_text = re.sub(r'\s+([;:,.])', r'\1', clean_text)
 
-            # Quitar espacios iniciales/finales
             return clean_text.strip()
 
-        def extrae_Tabla(element):
+        def extrae_Tabla(element, rels_map, namespaces):
             # Inicializa la estructura HTML de la tabla
             html = "<table border='1'>\n"
 
@@ -171,6 +219,8 @@ class functionsDocx:
 
             # Itera sobre las filas de la tabla
             for i, row in enumerate(element.xpath('.//w:tr')):
+                hiperlinks = self.extract_hiperlink(row, rels_map, namespaces) if found_hiperlinks else None
+                
                 html += "  <tr>\n"
                 # Itera sobre las celdas de cada fila
                 j = 0  # índice de columna
@@ -225,7 +275,7 @@ class functionsDocx:
                     if not v_merge_fin:
                         # Obtén el contenido del texto de la celda
                         cell_text = "<br>".join([t.text for t in cell.xpath('.//w:t')])
-                        cell_text = clean_labels(cell_text)
+                        cell_text = clean_labels(cell_text) + (f" {hiperlinks}" if hiperlinks else "")
 
                         # Determina el tag a usar (th para el encabezado, td para celdas normales)
                         tag = "th" if i == 0 else "td"
@@ -250,6 +300,7 @@ class functionsDocx:
         sections = []
         images = []
         found_fb = False
+        review_fb = True
         #Palabras a buscar como indicador del primer bloque
         start_text = ['introducción', 'introduction', 'introdução']
 
@@ -257,14 +308,18 @@ class functionsDocx:
         current_num_id = None
         numId = None
         namespaces_p = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
         for element in doc.element.body:        
             if isinstance(element, CT_P):
                 obj = {}
 
                 namespaces = {
                     'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
-                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
                 }
+
+                hiperlinks = self.extract_hiperlink(element, hiperlinks_info, namespaces) if found_hiperlinks else None
 
                 obj_image = False
                 obj_formula = False
@@ -292,7 +347,6 @@ class functionsDocx:
                                 # Referenciar la imagen guardada en el objeto
                                 obj['type'] = 'image'
                                 obj['image'] = wagtail_image.id
-                
                 
                 ns_math = {
                     'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math',
@@ -347,10 +401,22 @@ class functionsDocx:
                             content.append(objl)
 
                     for child in paragraph:
-                        if child.tag == '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r':
+                        if child.tag == '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}hyperlink':
+                            for r in child.findall('w:r', namespaces=child.nsmap):
+                                t_elem = r.find('w:t', namespaces=child.nsmap)
+                                if t_elem is not None and t_elem.text:
+                                    text_paragraph.append(t_elem.text)
+
+                        elif child.tag == '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r':
                             namespaces = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
                             sz_element = child.find('.//w:sz', namespaces=child.nsmap)
                             obj['font_size'] = 0
+
+                            if sz_element is None:
+                                p_pr = paragraph.find('.//w:rPr/w:sz', namespaces=child.nsmap)
+                                if p_pr is not None:
+                                    sz_element = p_pr.find('.//w:pPr', namespaces=child.nsmap)
+
                             if sz_element is not None:
                                 xml_string = etree.tostring(sz_element, pretty_print=True, encoding='unicode')
                                 size_element = objectify.fromstring(xml_string)
@@ -358,6 +424,12 @@ class functionsDocx:
                                 obj['font_size'] = int(font_size_value)/2
 
                             color_element = child.find('.//w:color', namespaces=child.nsmap)
+
+                            if color_element is None:
+                                p_pr = paragraph.find('.//w:pPr', namespaces=child.nsmap)
+                                if p_pr is not None:
+                                    color_element = p_pr.find('.//w:rPr/w:color', namespaces=child.nsmap)
+
                             if color_element is not None:
                                 xml_string_color = etree.tostring(color_element, pretty_print=True, encoding='unicode')
                                 object_element = objectify.fromstring(xml_string_color)
@@ -365,6 +437,12 @@ class functionsDocx:
                                 obj['color'] = color_value
 
                             b_tag = child.find('.//w:b', namespaces=child.nsmap)
+
+                            if b_tag is None:
+                                p_pr = paragraph.find('.//w:rPr/w:b', namespaces=child.nsmap)
+                                if p_pr is not None:
+                                    b_tag = p_pr.find('.//w:pPr', namespaces=child.nsmap)
+
                             if b_tag is not None:
                                 val = b_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
                                 obj['bold'] = (val is None or val in ['1', 'true', 'True'])
@@ -372,6 +450,12 @@ class functionsDocx:
                                 obj['bold'] = False
 
                             i_tag = child.find('.//w:i', namespaces=child.nsmap)
+
+                            if i_tag is None:
+                                p_pr = paragraph.find('.//w:rPr/w:i', namespaces=child.nsmap)
+                                if p_pr is not None:
+                                    i_tag = p_pr.find('.//w:pPr', namespaces=child.nsmap)
+
                             if i_tag is not None:
                                 val = i_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
                                 obj['italic'] = (val is None or val in ['1', 'true', 'True'])
@@ -379,28 +463,41 @@ class functionsDocx:
                                 obj['italic'] = False
                             
                             s_tag = child.find('.//w:spacing', namespaces=child.nsmap)
+                            
+                            if s_tag is None:
+                                p_pr = paragraph.find('.//w:rPr/w:spacing', namespaces=child.nsmap)
+                                if p_pr is not None:
+                                    s_tag = p_pr.find('.//w:pPr', namespaces=child.nsmap)
+
                             if s_tag is not None:
                                 val = s_tag.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}before')
                                 obj['spacing'] = not (val is None)
                             else:
                                 obj['spacing'] = False
 
+                            clean_text = clean_labels(child.text)
+
                             #identifica sección
-                            sections = identify_section(sections, obj['font_size'], obj['bold'] , child.text)
+                            sections = identify_section(sections, obj['font_size'], obj['bold'] , clean_text)
 
                             if obj['italic']:
-                                text_paragraph.append('[style name="italic"]' + clean_labels(child.text) + '[/style]')
+                                text_paragraph.append('<italic>' + clean_text + '</italic>' + (f" {hiperlinks}" if hiperlinks else ""))
                             else:
-                                text_paragraph.append(clean_labels(child.text))
+                                text_paragraph.append(clean_text + (f" {hiperlinks}" if hiperlinks else ""))
 
-                            paraph = match_paragraph(child.text)
+                            paraph = match_paragraph(clean_text)
                             if paraph:
                                 obj['paraph'] = paraph
+                                obj['type'] = paraph
 
-                            found_fb = any(word in child.text.lower() for word in start_text)
+                            if review_fb:
+                                found_fb = any(word in clean_text.lower() for word in start_text)
                             
                             #Si se encontró alguna palabra, incluye todo lo anterior en un sólo bloque
                             if found_fb:
+                                found_fb = False
+                                review_fb = False
+                                found_hiperlinks = False
                                 sections = [sections[-1]]
                                 first_block = ''
                                 tmp_content = []
@@ -452,21 +549,41 @@ class functionsDocx:
                             obj2['value'] = etree.tostring(mathml_root, pretty_print=True, encoding='unicode')
                             obj['text'].append(obj2)
 
-                    if 'text' not in obj:    
-                        obj['text'] = ' '.join(text_paragraph)
+                    if 'text' not in obj:
+                        obj['text'] = (' '.join(text_paragraph)).strip()
+                        clean_text = clean_labels(obj['text'])
+                        obj['text'] = clean_text
+
+                        paraph = match_paragraph(obj['text'])
+                        if paraph:
+                            obj['paraph'] = paraph
+                            obj['type'] = paraph
 
                         if is_numPr:
                             if 'font_size' in obj:
                                 del obj['font_size']
                             current_list.append(f'[list-item]{obj["text"]}[/list-item]')
+                    if isinstance(obj['text'], list) and len(text_paragraph) > 0:
+                        obj2 = {}
+                        obj2['type'] = 'text'
+                        obj2['value'] = ' '.join(text_paragraph)
+                        obj['text'].append(obj2)
+                        text_paragraph = []
             
             elif isinstance(element, CT_Tbl):
+                namespaces = {
+                    'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+                    'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                    'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+                }
+
                 table = element
-                table_data = extrae_Tabla(element)
+                table_data = extrae_Tabla(element, hiperlinks_info, namespaces)
                 obj = {}
                 obj['type'] = 'table'
                 obj['table'] = table_data
 
-            content.append(obj)
+            if not is_numPr:
+                content.append(obj)
         sections.sort(key=section_priority)
         return sections, content
