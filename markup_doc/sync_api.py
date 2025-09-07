@@ -3,7 +3,7 @@ from django.db import transaction
 from markup_doc.models import CollectionValuesModel, JournalModel, CollectionModel
 
 def sync_collection_from_api():
-    url = "https://core.scielo.org/api/v2/pid/collection"
+    url = "https://core.scielo.org/api/v2/pid/collection/"
     all_results = []
 
     while url:
@@ -15,7 +15,6 @@ def sync_collection_from_api():
     # Borra todo
     CollectionModel.objects.all().delete()
     deleted_count, _ = CollectionValuesModel.objects.all().delete()
-    print(f">>> Se borraron {deleted_count} elementos de CollectionValuesModel")
 
     for item in all_results:
         acron = item.get('acron3')
@@ -31,10 +30,6 @@ def sync_journals_from_api():
     journals = JournalModel.objects.all()
     if journals.exists():
         deleted_count, _ = journals.delete()
-        print(f"{deleted_count} registros eliminados.")
-    else:
-        print("No hay registros para eliminar.")
-
 
     obj = CollectionModel.objects.select_related('collection').first()
 
@@ -44,7 +39,7 @@ def sync_journals_from_api():
 
     if acron_selected:
 
-        url = "https://core.scielo.org/api/v2/pid/journal"
+        url = "https://core.scielo.org/api/v2/pid/journal/"
 
         while url:
             response = requests.get(url, headers={"Accept": "application/json"})
@@ -55,8 +50,8 @@ def sync_journals_from_api():
                     title = item.get("title", None)
                     short_title = item.get("short_title", None)
                     acronym = item.get("acronym", None)
-                    pissn = item.get("issn_print", None)
-                    eissn = item.get("issn_electronic", None)
+                    pissn = item.get("official", {}).get("issn_print", None)
+                    eissn = item.get("official", {}).get("issn_electronic", None)
                     acronym = item.get("acronym", None)
                     pubname = item.get("publisher", [])
                     title_in_database = item.get("title_in_database", [])
@@ -90,6 +85,7 @@ def sync_journals_from_api():
 
                     # Crear o actualizar el journal
                     print(title)
+                    print(item)
                     journal = JournalModel(
                         title=title,
                         short_title=short_title or None,
@@ -106,15 +102,12 @@ def sync_journals_from_api():
 
                 url = data.get("next")
             except:
-                print('********************************ERROR')
+                print('**ERROR url')
                 print(url)
                 url = None
 
         # Guardar todo junto
         if new_journals:
             with transaction.atomic():
-                JournalModel.objects.bulk_create(new_journals)
-            print(f"{len(new_journals)} registros insertados.")
-        else:
-            print("No se encontraron registros válidos.")
+                JournalModel.objects.bulk_create(new_journals, ignore_conflicts=True)
 
