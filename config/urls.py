@@ -12,6 +12,7 @@ from wagtail.documents import urls as wagtaildocs_urls
 from wagtailautocomplete.urls.admin import urlpatterns as autocomplete_admin_urls
 
 from core.api.wagtail.api import api_router
+from config import api_router as api_router2
 from reference import views as reference_views
 
 from core.search_site import views as search_views  # noqa isort:skip
@@ -29,9 +30,10 @@ urlpatterns = [
     # Wagtail Admin
     path(settings.WAGTAIL_ADMIN_URL, include(wagtailadmin_urls)),
     re_path(r"^documents/", include(wagtaildocs_urls)),
-    path("api/v2/pid/", include("config.api_router", namespace="pid_provider")),
+    #path("api/v2/pid/", include("config.api_router", namespace="pid_provider")),
     # JWT
-    path("api/v1/mix_citation/", include("config.api_router", namespace="reference")),
+    path("api/v1/mix_citation/", include(api_router2)),
+    path("api/v1/metadata/", include(api_router2)),
     path("api/v2/auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path(
         "api/v2/auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"

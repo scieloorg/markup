@@ -1,5 +1,5 @@
 from django.http import HttpResponseRedirect
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 from django.contrib import messages
 from django.template.response import TemplateResponse
 from wagtail.contrib.modeladmin.options import (
@@ -22,7 +22,8 @@ from markup_doc.models import (
     UploadDocx,
     MarkupXML,
     CollectionModel,
-    JournalModel
+    JournalModel,
+    ProcessStatus
 )
 
 from config.menu import get_menu_order
@@ -52,6 +53,9 @@ def register_admin_urls():
         path('download-xml/<int:id_registro>/', views.generate_xml, name='generate_xml'),
         path('extract-citation/', views.extract_citation, name='extract_citation'),
         path('get_journal/', views.get_journal, name='get_journal'),
+        path('download-zip/', views.generate_zip, name='generate_zip'),
+        path('preview-html/', views.preview_html_post, name='preview_html_post'),
+        path('pretty-xml/', views.preview_xml_tree, name='preview_xml_tree'),
     ]
 
 @hooks.register('insert_editor_js')
@@ -75,7 +79,7 @@ class ArticleDocxCreateView(CreateView):
 
     def form_valid(self, form):
         self.object = form.save_all(self.request.user)
-        self.object.estatus = 1
+        self.object.estatus = ProcessStatus.PROCESSING
         self.object.save()
         transaction.on_commit(lambda: get_labels.delay(self.object.title, self.request.user.id))        
         return HttpResponseRedirect(self.get_success_url())
@@ -102,7 +106,7 @@ class ArticleDocxAdmin(ModelAdmin):
     list_per_page = 20
     list_display = (
         "title",
-        "estatus"
+        "get_estatus_display"
     )
 
 
@@ -140,7 +144,7 @@ class UploadDocxViewSet(SnippetViewSet):
     list_per_page = 20
     list_display = (
         "title",
-        "estatus"
+        "get_estatus_display"
     )
 
 
